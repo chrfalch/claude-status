@@ -6,14 +6,15 @@ struct AgentRow {
     let summary: String?
     let color: NSColor
     let runningSubagents: Int
+    let shellCommands: Int
     let host: NSRunningApplication?
     let open: (@MainActor () -> Void)?
 }
 
 final class AgentListView: NSView {
-    private static let width: CGFloat = 360
+    static let width: CGFloat = 360
     private static let maxVisibleRows = 10
-    private static let inset: CGFloat = 14
+    static let inset: CGFloat = 14
     private static let dotSize: CGFloat = 10
     private static let textX: CGFloat = inset + dotSize + 8
     private static let verticalPadding: CGFloat = 6
@@ -52,8 +53,16 @@ final class AgentListView: NSView {
         let top: CGFloat = 0
         let textWidth = width - textX - inset
         let iconSize: CGFloat = 16
-        let chip = row.runningSubagents > 0 ? SubagentChip(count: row.runningSubagents) : nil
-        let iconsWidth = (row.host == nil ? 0 : iconSize + 6) + (chip.map { $0.frame.width + 6 } ?? 0)
+        var chips: [CountChip] = []
+        if row.shellCommands > 0 {
+            chips.append(CountChip(count: row.shellCommands, symbol: "terminal",
+                                   toolTip: row.shellCommands == 1 ? "1 shell command running" : "\(row.shellCommands) shell commands running"))
+        }
+        if row.runningSubagents > 0 {
+            chips.append(CountChip(count: row.runningSubagents, symbol: nil,
+                                   toolTip: row.runningSubagents == 1 ? "1 sub-agent running" : "\(row.runningSubagents) sub-agents running"))
+        }
+        let iconsWidth = (row.host == nil ? 0 : iconSize + 6) + chips.reduce(0) { $0 + $1.frame.width + 6 }
         let titleWidth = textWidth - iconsWidth
         let title = label(row.title, font: .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold), color: .labelColor, lines: 1)
         let titleHeight = title.cell!.cellSize(forBounds: NSRect(x: 0, y: 0, width: titleWidth, height: 1000)).height
@@ -72,10 +81,11 @@ final class AgentListView: NSView {
             parent.addSubview(icon)
         }
 
-        if let chip {
-            let right = row.host == nil ? width - inset : width - inset - iconSize - 6
+        var right = row.host == nil ? width - inset : width - inset - iconSize - 6
+        for chip in chips.reversed() {
             chip.setFrameOrigin(NSPoint(x: right - chip.frame.width, y: title.frame.midY - chip.frame.height / 2))
             parent.addSubview(chip)
+            right -= chip.frame.width + 6
         }
 
         var bottom = title.frame.maxY
@@ -100,7 +110,103 @@ final class AgentListView: NSView {
     }
 }
 
-private class FlippedView: NSView {
+final class UsageView: FlippedView {
+    private static let nameWidth: CGFloat = 52
+    private static let detailWidth: CGFloat = 130
+    private static let barHeight: CGFloat = 6
+    private static let rowHeight: CGFloat = 18
+    private static let daysHeight: CGFloat = 11
+
+    init(gauges: [Usage.Gauge], weekDays: [Usage.Day]?) {
+        var y: CGFloat = 6
+        var subviews: [NSView] = []
+        let barX = AgentListView.inset + Self.nameWidth
+        let barWidth = AgentListView.width - AgentListView.inset - Self.detailWidth - 8 - barX
+        for gauge in gauges {
+            let days = gauge.name == "Week" ? weekDays : nil
+            let name = Self.label(gauge.name, color: .secondaryLabelColor, alignment: .left)
+            name.frame = NSRect(x: AgentListView.inset, y: y, width: Self.nameWidth, height: Self.rowHeight)
+            let detail = Self.label(gauge.detail, color: .secondaryLabelColor, alignment: .right)
+            detail.frame = NSRect(x: AgentListView.width - AgentListView.inset - Self.detailWidth, y: y, width: Self.detailWidth, height: Self.rowHeight)
+            let bar = UsageBar(gauge: gauge, days: days)
+            bar.frame = NSRect(x: barX, y: y + (Self.rowHeight - Self.barHeight) / 2 - 2, width: barWidth, height: Self.barHeight + 4)
+            subviews += [name, detail, bar]
+            y += Self.rowHeight
+            if let days {
+                let segment = barWidth / CGFloat(days.count)
+                for (index, day) in days.enumerated() {
+                    let letter = Self.label(day.symbol, color: day.isWeekend ? .secondaryLabelColor : .tertiaryLabelColor, alignment: .center, size: 9)
+                    letter.frame = NSRect(x: barX + CGFloat(index) * segment, y: y - 3, width: segment, height: Self.daysHeight)
+                    subviews.append(letter)
+                }
+                y += Self.daysHeight - 2
+            }
+        }
+        super.init(frame: NSRect(x: 0, y: 0, width: AgentListView.width, height: y + 6))
+        subviews.forEach(addSubview)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    private static func label(_ text: String, color: NSColor, alignment: NSTextAlignment, size: CGFloat = NSFont.smallSystemFontSize) -> NSTextField {
+        let label = NSTextField(labelWithString: text)
+        label.font = .monospacedDigitSystemFont(ofSize: size, weight: .medium)
+        label.textColor = color
+        label.alignment = alignment
+        label.lineBreakMode = .byTruncatingTail
+        return label
+    }
+}
+
+/// A usage bar with a marker for the time passed; split into day segments when days are given.
+private final class UsageBar: NSView {
+    private let gauge: Usage.Gauge
+    private let days: [Usage.Day]?
+
+    init(gauge: Usage.Gauge, days: [Usage.Day]?) {
+        self.gauge = gauge
+        self.days = days
+        super.init(frame: .zero)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let track = bounds.insetBy(dx: 0, dy: 2)
+        let segments = days.map { days in
+            let gap: CGFloat = 2
+            let width = (track.width - gap * CGFloat(days.count - 1)) / CGFloat(days.count)
+            return days.enumerated().map { index, day in
+                (NSRect(x: track.minX + CGFloat(index) * (width + gap), y: track.minY, width: width, height: track.height), day.isWeekend)
+            }
+        } ?? [(track, false)]
+        let fillColor: NSColor = switch gauge.used ?? 0 {
+        case 0.9...: .systemRed
+        case 0.75...: .systemOrange
+        default: .controlAccentColor
+        }
+        let fillEnd = track.minX + track.width * (gauge.used ?? 0)
+        for (rect, isWeekend) in segments {
+            let radius = rect.height / 2
+            let shape = NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius)
+            (isWeekend ? NSColor.systemPurple.withAlphaComponent(0.22) : NSColor.labelColor.withAlphaComponent(0.12)).setFill()
+            shape.fill()
+            guard fillEnd > rect.minX else { continue }
+            NSGraphicsContext.saveGraphicsState()
+            shape.addClip()
+            fillColor.setFill()
+            NSRect(x: rect.minX, y: rect.minY, width: min(rect.width, fillEnd - rect.minX), height: rect.height).fill()
+            NSGraphicsContext.restoreGraphicsState()
+        }
+        if let elapsed = gauge.elapsed {
+            let x = round(track.minX + track.width * elapsed)
+            NSColor.labelColor.withAlphaComponent(0.8).setFill()
+            NSBezierPath(roundedRect: NSRect(x: x - 1, y: bounds.minY, width: 2, height: bounds.height), xRadius: 1, yRadius: 1).fill()
+        }
+    }
+}
+
+class FlippedView: NSView {
     override var isFlipped: Bool { true }
 }
 
@@ -144,17 +250,23 @@ private final class RowView: FlippedView {
     }
 }
 
-private final class SubagentChip: NSView {
+private final class CountChip: NSView {
     private let text: NSAttributedString
+    private let symbol: NSImage?
+    private static let symbolSize: CGFloat = 10
 
-    init(count: Int) {
+    init(count: Int, symbol: String?, toolTip: String) {
         text = NSAttributedString(string: "\(count)", attributes: [
             .font: NSFont.monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize - 1, weight: .semibold),
             .foregroundColor: NSColor.secondaryLabelColor,
         ])
+        self.symbol = symbol
+            .flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) }?
+            .withSymbolConfiguration(.init(pointSize: Self.symbolSize, weight: .semibold).applying(.init(hierarchicalColor: .secondaryLabelColor)))
         let height: CGFloat = 16
-        super.init(frame: NSRect(x: 0, y: 0, width: max(height, ceil(text.size().width) + 10), height: height))
-        toolTip = count == 1 ? "1 sub-agent running" : "\(count) sub-agents running"
+        let content = ceil(text.size().width) + (self.symbol == nil ? 0 : Self.symbolSize + 3)
+        super.init(frame: NSRect(x: 0, y: 0, width: max(height, content + 10), height: height))
+        self.toolTip = toolTip
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
@@ -163,7 +275,13 @@ private final class SubagentChip: NSView {
         NSColor.labelColor.withAlphaComponent(0.1).setFill()
         NSBezierPath(roundedRect: bounds, xRadius: bounds.height / 2, yRadius: bounds.height / 2).fill()
         let size = text.size()
-        text.draw(at: NSPoint(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2))
+        var x = (bounds.width - size.width - (symbol == nil ? 0 : Self.symbolSize + 3)) / 2
+        if let symbol {
+            let height = Self.symbolSize * symbol.size.height / max(symbol.size.width, 1)
+            symbol.draw(in: NSRect(x: x, y: (bounds.height - height) / 2, width: Self.symbolSize, height: height))
+            x += Self.symbolSize + 3
+        }
+        text.draw(at: NSPoint(x: x, y: (bounds.height - size.height) / 2))
     }
 }
 
@@ -180,6 +298,28 @@ enum StatusDot {
             color.set()
             let offset = (canvas - diameter) / 2
             NSBezierPath(ovalIn: NSRect(x: offset, y: offset, width: diameter, height: diameter)).fill()
+            return true
+        }
+        image.isTemplate = false
+        return image
+    }
+
+    /// The menu bar icon: a light pill holding the agent emoji and the dot image, which may be a pulse frame.
+    static func pill(_ dot: NSImage, emoji: String = "🤖") -> NSImage {
+        let text = NSAttributedString(string: emoji, attributes: [.font: NSFont.systemFont(ofSize: 12)])
+        let textSize = text.size()
+        let height = dot.size.height
+        let pillHeight: CGFloat = 18
+        let padding: CGFloat = 6
+        let dotDiameter: CGFloat = 10
+        let width = padding + ceil(textSize.width) + 4 + dotDiameter + padding
+        let image = NSImage(size: NSSize(width: width, height: height), flipped: false) { _ in
+            NSColor.labelColor.withAlphaComponent(0.15).setFill()
+            NSBezierPath(roundedRect: NSRect(x: 0, y: (height - pillHeight) / 2, width: width, height: pillHeight),
+                         xRadius: pillHeight / 2, yRadius: pillHeight / 2).fill()
+            text.draw(at: NSPoint(x: padding, y: (height - textSize.height) / 2))
+            let dotCenterX = width - padding - dotDiameter / 2
+            dot.draw(in: NSRect(x: dotCenterX - dot.size.width / 2, y: 0, width: dot.size.width, height: height))
             return true
         }
         image.isTemplate = false

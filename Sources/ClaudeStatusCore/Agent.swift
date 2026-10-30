@@ -13,6 +13,7 @@ public struct Agent: Decodable, Sendable {
     public var ledgerTitle: String?
     public var lastActivity: Date?
     public var runningSubagents = 0
+    public var shellCommands = 0
 
     enum CodingKeys: String, CodingKey {
         case startedAt, cwd, name, id, status, kind, state, pid, sessionId
@@ -44,10 +45,15 @@ public struct Agent: Decodable, Sendable {
 
     public var resolvedStatus: AgentStatus { AgentStatus(rawValue: state ?? status) }
 
+    /// An idle session can still wait for its background commands or sub-agents, and these keep the work going.
+    public var activity: Activity {
+        let activity = resolvedStatus.activity
+        return activity == .idle && (shellCommands > 0 || runningSubagents > 0) ? .working : activity
+    }
+
     public var menuLabel: String {
-        let status = resolvedStatus
-        let suffix = status.unknownRawValue.map { " (unknown: \($0))" } ?? ""
-        return "\(displayName) — \(status.activity.label)\(suffix)"
+        let suffix = resolvedStatus.unknownRawValue.map { " (unknown: \($0))" } ?? ""
+        return "\(displayName) — \(activity.label)\(suffix)"
     }
 
     public var displayName: String {
@@ -63,8 +69,8 @@ public struct Agent: Decodable, Sendable {
 
     public static func sorted(_ agents: [Agent]) -> [Agent] {
         agents.sorted {
-            let left = $0.resolvedStatus.activity.rawValue
-            let right = $1.resolvedStatus.activity.rawValue
+            let left = $0.activity.rawValue
+            let right = $1.activity.rawValue
             if left != right { return left < right }
             switch ($0.lastActivity, $1.lastActivity) {
             case let (l?, r?) where l != r: return l > r

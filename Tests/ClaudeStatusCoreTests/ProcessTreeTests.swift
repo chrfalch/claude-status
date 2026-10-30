@@ -26,3 +26,20 @@ import Testing
 @Test func realParentOfCurrentProcess() {
     #expect(ProcessTree.parent(of: getpid()) == getppid())
 }
+
+@Test func claudeShellCommandIsRecognized() {
+    #expect(ProcessTree.isClaudeShellCommand(["/bin/zsh", "-c", "source /Users/me/.claude/shell-snapshots/snapshot-zsh-1-ab.sh 2>/dev/null || true && bun scan.ts"]))
+    #expect(!ProcessTree.isClaudeShellCommand(["node", "/Users/me/.npm-global/bin/argent", "mcp"]))
+    #expect(!ProcessTree.isClaudeShellCommand([]))
+}
+
+@Test func childrenAndArgumentsOfLiveProcess() throws {
+    let child = Process()
+    child.executableURL = URL(fileURLWithPath: "/bin/sleep")
+    child.arguments = ["30"]
+    try child.run()
+    defer { child.terminate() }
+    #expect(ProcessTree.children(of: getpid()).contains(child.processIdentifier))
+    #expect(ProcessTree.arguments(of: child.processIdentifier) == ["/bin/sleep", "30"])
+    #expect(ProcessTree.arguments(of: 999_999) == nil)
+}
