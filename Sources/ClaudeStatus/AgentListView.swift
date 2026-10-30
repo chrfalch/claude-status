@@ -12,7 +12,7 @@ struct AgentRow {
 
 final class AgentListView: NSView {
     private static let width: CGFloat = 360
-    private static let maxVisibleRows = 15
+    private static let maxVisibleRows = 10
     private static let inset: CGFloat = 14
     private static let dotSize: CGFloat = 10
     private static let textX: CGFloat = inset + dotSize + 8
