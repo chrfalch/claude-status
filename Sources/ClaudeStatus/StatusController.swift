@@ -15,6 +15,10 @@ final class StatusController: NSObject, NSMenuDelegate {
     private var summaries: [String: String] = [:]
     private var errorText: String? = "Loading…"
     private var lastUpdated: Date?
+    private var iconColor: NSColor?
+    private var pulse: Timer?
+    // Larger than the dot so the rings have room to grow; the menu bar scales down anything taller.
+    private let iconCanvas = min(22, NSStatusBar.system.thickness)
     private let timeFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss"
@@ -100,12 +104,12 @@ final class StatusController: NSObject, NSMenuDelegate {
     private func render() {
         menu.removeAllItems()
         if let errorText {
-            item.button?.image = dot(color: .systemOrange)
+            showIcon(.systemOrange)
             item.button?.toolTip = errorText
             addLabel(errorText)
         } else {
             let activities = agents.map { $0.resolvedStatus.activity }
-            item.button?.image = dot(Activity.aggregate(activities))
+            showIcon(color(Activity.aggregate(activities)))
             item.button?.toolTip = "\(activities.filter { $0 == .waiting }.count) waiting · \(activities.filter { $0 == .working }.count) working · \(activities.filter { $0 == .idle }.count) idle"
             if agents.isEmpty { addLabel("No agents") }
             else {
@@ -187,7 +191,30 @@ final class StatusController: NSObject, NSMenuDelegate {
         }
     }
 
-    private func dot(_ activity: Activity) -> NSImage { dot(color: color(activity)) }
-
-    private func dot(color: NSColor) -> NSImage { StatusDot.image(color, canvas: 16) }
+    private func showIcon(_ color: NSColor) {
+        guard color != iconColor else { return }
+        let previous = iconColor
+        iconColor = color
+        pulse?.invalidate()
+        pulse = nil
+        guard let previous, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+            item.button?.image = StatusDot.image(color, canvas: iconCanvas)
+            return
+        }
+        let start = Date()
+        let duration: TimeInterval = 1.6
+        let canvas = iconCanvas
+        // A scheduled timer fires on the main run loop.
+        pulse = Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let progress = min(1, Date().timeIntervalSince(start) / duration)
+                self.item.button?.image = StatusDot.pulse(from: previous, to: color, progress: progress, canvas: canvas)
+                if progress >= 1 {
+                    self.pulse?.invalidate()
+                    self.pulse = nil
+                }
+            }
+        }
+    }
 }

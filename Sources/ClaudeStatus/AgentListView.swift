@@ -185,4 +185,36 @@ enum StatusDot {
         image.isTemplate = false
         return image
     }
+
+    /// One frame of a state change: the dot fades to the new color while two rings of it grow outward and fade.
+    static func pulse(from old: NSColor, to new: NSColor, progress: Double, canvas: CGFloat, diameter: CGFloat = 10) -> NSImage {
+        let image = NSImage(size: NSSize(width: canvas, height: canvas), flipped: false) { _ in
+            let center = NSPoint(x: canvas / 2, y: canvas / 2)
+            let softness: CGFloat = 2.5
+            let maxRadius = canvas / 2 - softness
+            for delay in [0.0, 0.35] {
+                let ring = (progress - delay) / 0.65
+                guard ring > 0, ring < 1 else { continue }
+                let eased = 1 - pow(1 - ring, 2)
+                let radius = diameter / 2 + (maxRadius - diameter / 2) * eased
+                let outer = radius + softness
+                // A radial gradient that peaks at the ring radius draws a blurred ring.
+                let peak = new.withAlphaComponent(0.55 * (1 - ring))
+                let clear = new.withAlphaComponent(0)
+                let gradient = NSGradient(colors: [clear, clear, peak, clear],
+                                          atLocations: [0, max(0, (radius - softness) / outer), radius / outer, 1],
+                                          colorSpace: .sRGB)
+                gradient?.draw(fromCenter: center, radius: 0, toCenter: center, radius: outer, options: [])
+            }
+            let fade = min(1, progress / 0.45)
+            (old.blended(withFraction: fade, of: new) ?? new).setFill()
+            // A small swell makes the color change noticeable even when the rings are faint.
+            let swell = 1 + 0.12 * sin(.pi * min(1, progress / 0.5))
+            let size = diameter * swell
+            NSBezierPath(ovalIn: NSRect(x: center.x - size / 2, y: center.y - size / 2, width: size, height: size)).fill()
+            return true
+        }
+        image.isTemplate = false
+        return image
+    }
 }
