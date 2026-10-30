@@ -117,29 +117,43 @@ final class UsageView: FlippedView {
     private static let rowHeight: CGFloat = 18
     private static let daysHeight: CGFloat = 11
 
-    init(gauges: [Usage.Gauge], weekDays: [Usage.Day]?) {
-        var y: CGFloat = 6
+    init(sections: [(title: String, icon: NSImage?, gauges: [Usage.Gauge])]) {
+        var y: CGFloat = 4
         var subviews: [NSView] = []
         let barX = AgentListView.inset + Self.nameWidth
         let barWidth = AgentListView.width - AgentListView.inset - Self.detailWidth - 8 - barX
-        for gauge in gauges {
-            let days = gauge.name == "Week" ? weekDays : nil
-            let name = Self.label(gauge.name, color: .secondaryLabelColor, alignment: .left)
-            name.frame = NSRect(x: AgentListView.inset, y: y, width: Self.nameWidth, height: Self.rowHeight)
-            let detail = Self.label(gauge.detail, color: .secondaryLabelColor, alignment: .right)
-            detail.frame = NSRect(x: AgentListView.width - AgentListView.inset - Self.detailWidth, y: y, width: Self.detailWidth, height: Self.rowHeight)
-            let bar = UsageBar(gauge: gauge, days: days)
-            bar.frame = NSRect(x: barX, y: y + (Self.rowHeight - Self.barHeight) / 2 - 2, width: barWidth, height: Self.barHeight + 4)
-            subviews += [name, detail, bar]
-            y += Self.rowHeight
-            if let days {
-                let segment = barWidth / CGFloat(days.count)
-                for (index, day) in days.enumerated() {
-                    let letter = Self.label(day.symbol, color: day.isWeekend ? .secondaryLabelColor : .tertiaryLabelColor, alignment: .center, size: 9)
-                    letter.frame = NSRect(x: barX + CGFloat(index) * segment, y: y - 3, width: segment, height: Self.daysHeight)
-                    subviews.append(letter)
+        for (index, section) in sections.enumerated() {
+            if index > 0 { y += 4 }
+            var titleX = AgentListView.inset
+            if let image = section.icon {
+                let icon = NSImageView(image: image)
+                icon.imageScaling = .scaleProportionallyUpOrDown
+                icon.frame = NSRect(x: titleX, y: y, width: Self.daysHeight + 2, height: Self.daysHeight + 2)
+                subviews.append(icon)
+                titleX += Self.daysHeight + 3
+            }
+            let title = Self.label(section.title.uppercased(), color: .tertiaryLabelColor, alignment: .left, size: 9, weight: .semibold)
+            title.frame = NSRect(x: titleX, y: y, width: barWidth, height: Self.daysHeight + 2)
+            subviews.append(title)
+            y += Self.daysHeight + 7
+            for gauge in section.gauges {
+                let name = Self.label(gauge.name, color: .secondaryLabelColor, alignment: .left)
+                name.frame = NSRect(x: AgentListView.inset, y: y, width: Self.nameWidth, height: Self.rowHeight)
+                let detail = Self.label(gauge.detail, color: .secondaryLabelColor, alignment: .right)
+                detail.frame = NSRect(x: AgentListView.width - AgentListView.inset - Self.detailWidth, y: y, width: Self.detailWidth, height: Self.rowHeight)
+                let bar = UsageBar(gauge: gauge)
+                bar.frame = NSRect(x: barX, y: y + (Self.rowHeight - Self.barHeight) / 2 - 2, width: barWidth, height: Self.barHeight + 4)
+                subviews += [name, detail, bar]
+                y += Self.rowHeight
+                if let days = gauge.days {
+                    let segment = barWidth / CGFloat(days.count)
+                    for (index, day) in days.enumerated() {
+                        let letter = Self.label(day.symbol, color: day.isWeekend ? .secondaryLabelColor : .tertiaryLabelColor, alignment: .center, size: 9)
+                        letter.frame = NSRect(x: barX + CGFloat(index) * segment, y: y - 3, width: segment, height: Self.daysHeight)
+                        subviews.append(letter)
+                    }
+                    y += Self.daysHeight - 2
                 }
-                y += Self.daysHeight - 2
             }
         }
         super.init(frame: NSRect(x: 0, y: 0, width: AgentListView.width, height: y + 6))
@@ -148,9 +162,9 @@ final class UsageView: FlippedView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-    private static func label(_ text: String, color: NSColor, alignment: NSTextAlignment, size: CGFloat = NSFont.smallSystemFontSize) -> NSTextField {
+    private static func label(_ text: String, color: NSColor, alignment: NSTextAlignment, size: CGFloat = NSFont.smallSystemFontSize, weight: NSFont.Weight = .medium) -> NSTextField {
         let label = NSTextField(labelWithString: text)
-        label.font = .monospacedDigitSystemFont(ofSize: size, weight: .medium)
+        label.font = .monospacedDigitSystemFont(ofSize: size, weight: weight)
         label.textColor = color
         label.alignment = alignment
         label.lineBreakMode = .byTruncatingTail
@@ -161,11 +175,9 @@ final class UsageView: FlippedView {
 /// A usage bar with a marker for the time passed; split into day segments when days are given.
 private final class UsageBar: NSView {
     private let gauge: Usage.Gauge
-    private let days: [Usage.Day]?
 
-    init(gauge: Usage.Gauge, days: [Usage.Day]?) {
+    init(gauge: Usage.Gauge) {
         self.gauge = gauge
-        self.days = days
         super.init(frame: .zero)
     }
 
@@ -173,7 +185,7 @@ private final class UsageBar: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         let track = bounds.insetBy(dx: 0, dy: 2)
-        let segments = days.map { days in
+        let segments = gauge.days.map { days in
             let gap: CGFloat = 2
             let width = (track.width - gap * CGFloat(days.count - 1)) / CGFloat(days.count)
             return days.enumerated().map { index, day in

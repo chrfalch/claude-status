@@ -16,6 +16,13 @@ final class StatusController: NSObject, NSMenuDelegate {
     private var errorText: String? = "Loading…"
     private var lastUpdated: Date?
     private var iconColor: NSColor?
+    private var usages: [(String, Usage)] = []
+    private let usageIcons: [String: NSImage] = [("Claude", "com.anthropic.claudefordesktop"), ("Codex", "com.openai.codex")]
+        .reduce(into: [:]) { icons, app in
+            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: app.1) {
+                icons[app.0] = NSWorkspace.shared.icon(forFile: url.path)
+            }
+        }
     private var pulse: Timer?
     // Larger than the dot so the rings have room to grow; the menu bar scales down anything taller.
     private let iconCanvas = min(22, NSStatusBar.system.thickness)
@@ -74,8 +81,13 @@ final class StatusController: NSObject, NSMenuDelegate {
                     throw CommandError(message: error.localizedDescription)
                 }
             }
+            let usages = [
+                ("Claude", (try? Data(contentsOf: Usage.file)).flatMap(Usage.decode)),
+                ("Codex", Usage.newestCodexSessionLog().flatMap { try? Self.tail(of: $0) }.flatMap { Usage.codex(sessionLog: $0) }),
+            ].compactMap { name, usage in usage.map { (name, $0) } }
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                self.usages = usages
                 switch resolved {
                 case .success(let path): self.binary = path
                 case .failure: self.lastLookupFailure = Date()
@@ -104,12 +116,23 @@ final class StatusController: NSObject, NSMenuDelegate {
         }
     }
 
+    /// Codex session logs grow for the whole session, and its latest limits are near the end.
+    nonisolated private static func tail(of url: URL, bytes: UInt64 = 512 * 1024) throws -> Data {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        let size = try handle.seekToEnd()
+        try handle.seek(toOffset: size > bytes ? size - bytes : 0)
+        return try handle.readToEnd() ?? Data()
+    }
+
     private func render() {
         menu.removeAllItems()
-        if let usage = (try? Data(contentsOf: Usage.file)).flatMap(Usage.decode), case let gauges = usage.gauges(now: Date()), !gauges.isEmpty {
-            let weekDays = usage.sevenDay?.resetsAt.map { Usage.weekDays(endingAt: Date(timeIntervalSince1970: $0)) }
+        let sections = usages
+            .map { name, usage in (title: name, icon: usageIcons[name], gauges: usage.gauges(now: Date())) }
+            .filter { !$0.gauges.isEmpty }
+        if !sections.isEmpty {
             let line = NSMenuItem()
-            line.view = UsageView(gauges: gauges, weekDays: weekDays)
+            line.view = UsageView(sections: sections)
             menu.addItem(line)
             menu.addItem(.separator())
         }

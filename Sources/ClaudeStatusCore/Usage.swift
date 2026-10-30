@@ -1,29 +1,11 @@
 import Foundation
 
-/// Claude rate limits as saved by the status line command from its `rate_limits` input.
-public struct Usage: Decodable, Sendable {
-    public struct Window: Decodable, Sendable {
+/// Rate limit windows of one provider, each shown as a gauge.
+public struct Usage: Sendable {
+    public struct Window: Sendable {
+        public let length: TimeInterval
         public let usedPercentage: Double?
         public let resetsAt: Double?
-
-        enum CodingKeys: String, CodingKey {
-            case usedPercentage = "used_percentage"
-            case resetsAt = "resets_at"
-        }
-    }
-
-    public let fiveHour: Window?
-    public let sevenDay: Window?
-
-    enum CodingKeys: String, CodingKey {
-        case fiveHour = "five_hour"
-        case sevenDay = "seven_day"
-    }
-
-    public static let file = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/state/rate-limits.json")
-
-    public static func decode(_ data: Data) -> Usage? {
-        try? JSONDecoder().decode(Usage.self, from: data)
     }
 
     public struct Gauge: Sendable {
@@ -33,6 +15,8 @@ public struct Usage: Decodable, Sendable {
         /// Share of the window's time that has passed, 0...1.
         public let elapsed: Double?
         public let detail: String
+        /// The days of a week window, for drawing it in day parts.
+        public let days: [Day]?
     }
 
     public struct Day: Sendable {
@@ -43,10 +27,84 @@ public struct Usage: Decodable, Sendable {
     public static let sessionLength: TimeInterval = 5 * 3600
     public static let weekLength: TimeInterval = 7 * 86400
 
-    public func gauges(now: Date) -> [Gauge] {
-        [("Session", fiveHour, Self.sessionLength), ("Week", sevenDay, Self.weekLength)].compactMap { name, window, length in
-            window.flatMap { Self.gauge(name, $0, length: length, now: now) }
+    public let windows: [Window]
+
+    public init(windows: [Window]) {
+        self.windows = windows.sorted { $0.length < $1.length }
+    }
+
+    // MARK: Claude
+
+    /// Saved by the Claude Code status line command from its `rate_limits` input.
+    public static let file = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/state/rate-limits.json")
+
+    public static func decode(_ data: Data) -> Usage? {
+        struct Window: Decodable {
+            let used_percentage: Double?
+            let resets_at: Double?
         }
+        struct Limits: Decodable {
+            let five_hour: Window?
+            let seven_day: Window?
+        }
+        guard let limits = try? JSONDecoder().decode(Limits.self, from: data) else { return nil }
+        return Usage(windows: [(limits.five_hour, sessionLength), (limits.seven_day, weekLength)].compactMap { window, length in
+            window.map { Usage.Window(length: length, usedPercentage: $0.used_percentage, resetsAt: $0.resets_at) }
+        })
+    }
+
+    // MARK: Codex
+
+    public static let codexSessions = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex/sessions")
+
+    /// The last `codex` limits that Codex wrote to a session log, in its `token_count` events.
+    public static func codex(sessionLog data: Data) -> Usage? {
+        struct Window: Decodable {
+            let used_percent: Double?
+            let window_minutes: Double?
+            let resets_at: Double?
+        }
+        struct Limits: Decodable {
+            let limit_id: String?
+            let primary: Window?
+            let secondary: Window?
+        }
+        struct Payload: Decodable {
+            let type: String?
+            let rate_limits: Limits?
+        }
+        struct Record: Decodable {
+            let payload: Payload?
+        }
+        let decoder = JSONDecoder()
+        for line in data.split(separator: UInt8(ascii: "\n")).reversed() {
+            guard let limits = (try? decoder.decode(Record.self, from: Data(line)))?.payload?.rate_limits,
+                  limits.limit_id == "codex" else { continue }
+            let windows = [limits.primary, limits.secondary].compactMap { window -> Usage.Window? in
+                guard let window, let minutes = window.window_minutes else { return nil }
+                return Usage.Window(length: minutes * 60, usedPercentage: window.used_percent, resetsAt: window.resets_at)
+            }
+            return windows.isEmpty ? nil : Usage(windows: windows)
+        }
+        return nil
+    }
+
+    /// A session started on an earlier day can still be the active one, so this picks by modification date.
+    public static func newestCodexSessionLog(in sessions: URL = codexSessions) -> URL? {
+        let keys: [URLResourceKey] = [.contentModificationDateKey]
+        guard let files = FileManager.default.enumerator(at: sessions, includingPropertiesForKeys: keys) else { return nil }
+        var newest: (url: URL, modified: Date)?
+        for case let url as URL in files where url.lastPathComponent.hasPrefix("rollout-") && url.pathExtension == "jsonl" {
+            guard let modified = try? url.resourceValues(forKeys: Set(keys)).contentModificationDate else { continue }
+            if modified > newest?.modified ?? .distantPast { newest = (url, modified) }
+        }
+        return newest?.url
+    }
+
+    // MARK: Gauges
+
+    public func gauges(now: Date, calendar: Calendar = .current) -> [Gauge] {
+        windows.compactMap { Self.gauge($0, now: now, calendar: calendar) }
     }
 
     /// One day per 24 hours of the week window, named by the weekday at the middle of that day.
@@ -59,17 +117,28 @@ public struct Usage: Decodable, Sendable {
         }
     }
 
-    private static func gauge(_ name: String, _ window: Window, length: TimeInterval, now: Date) -> Gauge? {
+    private static func name(_ length: TimeInterval) -> String {
+        switch length {
+        case sessionLength: "Session"
+        case weekLength: "Week"
+        default: "\(Int(length / 3600))h"
+        }
+    }
+
+    private static func gauge(_ window: Window, now: Date, calendar: Calendar) -> Gauge? {
+        let name = name(window.length)
         let remaining = window.resetsAt.map { $0 - now.timeIntervalSince1970 }
+        let days = window.length == weekLength ? window.resetsAt.map { weekDays(endingAt: Date(timeIntervalSince1970: $0), calendar: calendar) } : nil
         // The saved percentage belongs to the window that has ended, so it says nothing about the new one.
-        if let remaining, remaining <= 0 { return Gauge(name: name, used: nil, elapsed: nil, detail: "reset") }
+        if let remaining, remaining <= 0 { return Gauge(name: name, used: nil, elapsed: nil, detail: "reset", days: nil) }
         guard let percentage = window.usedPercentage else { return nil }
         let used = "\(Int(percentage.rounded()))%"
         return Gauge(
             name: name,
             used: min(1, max(0, percentage / 100)),
-            elapsed: remaining.map { min(1, max(0, 1 - $0 / length)) },
-            detail: remaining.map { "\(used) · resets in \(duration($0))" } ?? used
+            elapsed: remaining.map { min(1, max(0, 1 - $0 / window.length)) },
+            detail: remaining.map { "\(used) · resets in \(duration($0))" } ?? used,
+            days: days
         )
     }
 
