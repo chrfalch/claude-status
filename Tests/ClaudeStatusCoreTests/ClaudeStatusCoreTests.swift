@@ -184,3 +184,14 @@ import Testing
     agents[2].lastActivity = Date(timeIntervalSince1970: 200)
     #expect(Agent.sorted(agents).map(\.displayName) == ["waiting", "new", "old", "none"])
 }
+
+@Test func idleWithBackgroundWorkCountsAsWorking() throws {
+    var agents = try Agent.decode(Data(#"[{"name":"cmd","status":"idle"},{"name":"sub","status":"idle"},{"name":"plain","status":"idle"},{"name":"busy","status":"busy"},{"name":"wait","state":"blocked"}]"#.utf8))
+    agents[0].shellCommands = 1
+    agents[1].runningSubagents = 2
+    agents[3].shellCommands = 1
+    agents[4].shellCommands = 1
+    #expect(agents.map(\.activity) == [.working, .working, .idle, .working, .waiting])
+    #expect(agents.map(\.menuLabel) == ["cmd — working", "sub — working", "plain — idle", "busy — working", "wait — waiting"])
+    #expect(Agent.sorted(agents).map(\.displayName) == ["wait", "busy", "cmd", "sub", "plain"])
+}

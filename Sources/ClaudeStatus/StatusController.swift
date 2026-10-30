@@ -3,7 +3,7 @@ import ClaudeStatusCore
 
 @MainActor
 final class StatusController: NSObject, NSMenuDelegate {
-    private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+    private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let menu = NSMenu()
     private let queue = DispatchQueue(label: "dev.chrfalch.ClaudeStatus.poll", qos: .utility)
     private var timer: Timer?
@@ -59,12 +59,15 @@ final class StatusController: NSObject, NSMenuDelegate {
                     let roster = (try? Data(contentsOf: rosterURL)).flatMap { try? JSONDecoder().decode(Roster.self, from: $0) }
                     let live = Agent.live(agents, roster: roster, isAlive: ProcessLiveness.isAlive)
                     let activity = Transcript.activity(sessionIds: Set(live.compactMap(\.sessionId)))
+                    let children = ProcessTree.children(of: Set(live.compactMap { $0.pid.map(Int32.init) }))
                     return live.map { agent in
                         var agent = agent
                         agent.ledgerTitle = agent.cwd.flatMap(Ledger.title(forWorktree:))
                         let sessionActivity = agent.sessionId.flatMap { activity[$0] }
                         agent.lastActivity = sessionActivity?.lastModified
                         agent.runningSubagents = sessionActivity?.runningSubagents ?? 0
+                        agent.shellCommands = agent.pid.flatMap { children[Int32($0)] }?
+                            .filter { ProcessTree.arguments(of: $0).map(ProcessTree.isClaudeShellCommand) ?? false }.count ?? 0
                         return agent
                     }
                 } catch {
@@ -103,12 +106,19 @@ final class StatusController: NSObject, NSMenuDelegate {
 
     private func render() {
         menu.removeAllItems()
+        if let usage = (try? Data(contentsOf: Usage.file)).flatMap(Usage.decode), case let gauges = usage.gauges(now: Date()), !gauges.isEmpty {
+            let weekDays = usage.sevenDay?.resetsAt.map { Usage.weekDays(endingAt: Date(timeIntervalSince1970: $0)) }
+            let line = NSMenuItem()
+            line.view = UsageView(gauges: gauges, weekDays: weekDays)
+            menu.addItem(line)
+            menu.addItem(.separator())
+        }
         if let errorText {
             showIcon(.systemOrange)
             item.button?.toolTip = errorText
             addLabel(errorText)
         } else {
-            let activities = agents.map { $0.resolvedStatus.activity }
+            let activities = agents.map(\.activity)
             showIcon(color(Activity.aggregate(activities)))
             item.button?.toolTip = "\(activities.filter { $0 == .waiting }.count) waiting · \(activities.filter { $0 == .working }.count) working · \(activities.filter { $0 == .idle }.count) idle"
             if agents.isEmpty { addLabel("No agents") }
@@ -118,8 +128,9 @@ final class StatusController: NSObject, NSMenuDelegate {
                     return AgentRow(
                         title: agent.menuLabel,
                         summary: agent.sessionId.flatMap { summaries[$0] }.map { Summary.twoLines($0) },
-                        color: color(agent.resolvedStatus.activity),
+                        color: color(agent.activity),
                         runningSubagents: agent.runningSubagents,
+                        shellCommands: agent.shellCommands,
                         host: host,
                         open: host.map { host -> @MainActor () -> Void in { [weak self] in self?.open(agent, in: host) } }
                     )
@@ -198,7 +209,7 @@ final class StatusController: NSObject, NSMenuDelegate {
         pulse?.invalidate()
         pulse = nil
         guard let previous, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
-            item.button?.image = StatusDot.image(color, canvas: iconCanvas)
+            item.button?.image = StatusDot.pill(StatusDot.image(color, canvas: iconCanvas))
             return
         }
         let start = Date()
@@ -209,7 +220,7 @@ final class StatusController: NSObject, NSMenuDelegate {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 let progress = min(1, Date().timeIntervalSince(start) / duration)
-                self.item.button?.image = StatusDot.pulse(from: previous, to: color, progress: progress, canvas: canvas)
+                self.item.button?.image = StatusDot.pill(StatusDot.pulse(from: previous, to: color, progress: progress, canvas: canvas))
                 if progress >= 1 {
                     self.pulse?.invalidate()
                     self.pulse = nil
