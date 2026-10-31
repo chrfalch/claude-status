@@ -44,7 +44,12 @@ final class StatusController: NSObject, NSMenuDelegate {
         }
     }
 
-    func menuWillOpen(_ menu: NSMenu) { refresh(force: true) }
+    // The poll reads usage only after the slower agent list, so the menu would open with the last poll's numbers.
+    func menuWillOpen(_ menu: NSMenu) {
+        usages = Self.readUsages()
+        render()
+        refresh(force: true)
+    }
 
     @objc private func refreshNow() { refresh(force: true) }
 
@@ -81,10 +86,7 @@ final class StatusController: NSObject, NSMenuDelegate {
                     throw CommandError(message: error.localizedDescription)
                 }
             }
-            let usages = [
-                ("Claude", (try? Data(contentsOf: Usage.file)).flatMap(Usage.decode)),
-                ("Codex", Usage.newestCodexSessionLog().flatMap { try? Self.tail(of: $0) }.flatMap { Usage.codex(sessionLog: $0) }),
-            ].compactMap { name, usage in usage.map { (name, $0) } }
+            let usages = Self.readUsages()
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.usages = usages
@@ -114,6 +116,13 @@ final class StatusController: NSObject, NSMenuDelegate {
                 self.render()
             }
         }
+    }
+
+    nonisolated private static func readUsages() -> [(String, Usage)] {
+        [
+            ("Claude", (try? Data(contentsOf: Usage.file)).flatMap(Usage.decode)),
+            ("Codex", Usage.newestCodexSessionLog().flatMap { try? tail(of: $0) }.flatMap { Usage.codex(sessionLog: $0) }),
+        ].compactMap { name, usage in usage.map { (name, $0) } }
     }
 
     /// Codex session logs grow for the whole session, and its latest limits are near the end.
