@@ -17,6 +17,14 @@ public struct Usage: Sendable {
         public let detail: String
         /// The days of a week window, for drawing it in day parts.
         public let days: [Day]?
+        public let pace: Pace?
+    }
+
+    /// How the use compares with an even spread over the window.
+    public struct Pace: Equatable, Sendable {
+        public enum Level: Sendable { case calm, ahead, over }
+        public let level: Level
+        public let text: String
     }
 
     public struct Day: Sendable {
@@ -130,16 +138,39 @@ public struct Usage: Sendable {
         let remaining = window.resetsAt.map { $0 - now.timeIntervalSince1970 }
         let days = window.length == weekLength ? window.resetsAt.map { weekDays(endingAt: Date(timeIntervalSince1970: $0), calendar: calendar) } : nil
         // The saved percentage belongs to the window that has ended, so it says nothing about the new one.
-        if let remaining, remaining <= 0 { return Gauge(name: name, used: nil, elapsed: nil, detail: "reset", days: nil) }
+        if let remaining, remaining <= 0 { return Gauge(name: name, used: nil, elapsed: nil, detail: "reset", days: nil, pace: nil) }
         guard let percentage = window.usedPercentage else { return nil }
         let used = "\(Int(percentage.rounded()))%"
+        let elapsed = remaining.map { min(1, max(0, 1 - $0 / window.length)) }
         return Gauge(
             name: name,
             used: min(1, max(0, percentage / 100)),
-            elapsed: remaining.map { min(1, max(0, 1 - $0 / window.length)) },
+            elapsed: elapsed,
             detail: remaining.map { "\(used) · resets in \(duration($0))" } ?? used,
-            days: days
+            days: days,
+            pace: elapsed.flatMap { elapsed in
+                window.resetsAt.flatMap { pace(used: percentage / 100, elapsed: elapsed, start: $0 - window.length, length: window.length, now: now, calendar: calendar) }
+            }
         )
+    }
+
+    // Points, not a ratio: early in a window a few percent used would read as a large ratio.
+    private static func pace(used: Double, elapsed: Double, start: Double, length: TimeInterval, now: Date, calendar: Calendar) -> Pace? {
+        guard elapsed >= 0.05 else { return nil }
+        let points = Int(((used - elapsed) * 100).rounded())
+        switch points {
+        case ..<(-4): return Pace(level: .calm, text: "\(-points) pts under")
+        case ..<5: return Pace(level: .calm, text: "on pace")
+        case ..<15: return Pace(level: .ahead, text: "\(points) pts ahead")
+        default:
+            let runsOut = Date(timeIntervalSince1970: start + length * elapsed / used)
+            let formatter = DateFormatter()
+            formatter.calendar = calendar
+            formatter.timeZone = calendar.timeZone
+            formatter.locale = calendar.locale
+            formatter.dateFormat = calendar.isDate(runsOut, inSameDayAs: now) ? "HH:mm" : "EEE HH:mm"
+            return Pace(level: .over, text: "out \(formatter.string(from: runsOut))")
+        }
     }
 
     private static func duration(_ seconds: Double) -> String {

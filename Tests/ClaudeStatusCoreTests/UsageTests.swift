@@ -93,3 +93,44 @@ private func codexRecord(_ rateLimits: String) -> String {
     #expect(Usage.newestCodexSessionLog(in: root)?.lastPathComponent == resumed.lastPathComponent)
     #expect(Usage.newestCodexSessionLog(in: root.appendingPathComponent("missing")) == nil)
 }
+
+private func utcCalendar() -> Calendar {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(identifier: "UTC")!
+    calendar.locale = Locale(identifier: "en_US_POSIX")
+    return calendar
+}
+
+/// A week window that started at 0 and resets at 604800 (Thursday 1 Jan 1970 00:00 UTC to the next Thursday).
+private func weekPace(used: Double, elapsed: Double) throws -> Usage.Pace? {
+    let usage = try decode(#"{"seven_day":{"used_percentage":\#(used),"resets_at":604800}}"#)
+    return usage.gauges(now: Date(timeIntervalSince1970: 604800 * elapsed), calendar: utcCalendar())[0].pace
+}
+
+@Test func paceIsCalmAtOrBelowAnEvenPace() throws {
+    #expect(try weekPace(used: 33, elapsed: 0.30) == Usage.Pace(level: .calm, text: "on pace"))
+    #expect(try weekPace(used: 20, elapsed: 0.30) == Usage.Pace(level: .calm, text: "10 pts under"))
+}
+
+@Test func paceWarnsWhenAhead() throws {
+    #expect(try weekPace(used: 40, elapsed: 0.30) == Usage.Pace(level: .ahead, text: "10 pts ahead"))
+}
+
+@Test func paceShowsWhenTheLimitRunsOut() throws {
+    // 60% used after 30% of the week: at this rate 100% comes after half the week, Sunday 4 Jan 12:00 UTC.
+    #expect(try weekPace(used: 60, elapsed: 0.30) == Usage.Pace(level: .over, text: "out Sun 12:00"))
+}
+
+@Test func paceRunOutTodayShowsOnlyTheTime() throws {
+    // Session from 0 to 18000; 80% used after 40% of it runs out at 50%, 02:30 the same day.
+    let usage = try decode(#"{"five_hour":{"used_percentage":80,"resets_at":18000}}"#)
+    let pace = usage.gauges(now: Date(timeIntervalSince1970: 18000 * 0.4), calendar: utcCalendar())[0].pace
+    #expect(pace == Usage.Pace(level: .over, text: "out 02:30"))
+}
+
+@Test func paceIsHiddenEarlyInAWindowOrWithoutData() throws {
+    #expect(try weekPace(used: 3, elapsed: 0.02) == nil)
+    let reset = try decode(#"{"seven_day":{"used_percentage":40,"resets_at":100}}"#)
+    #expect(reset.gauges(now: Date(timeIntervalSince1970: 200))[0].pace == nil)
+    #expect(try decode(#"{"seven_day":{"used_percentage":40}}"#).gauges(now: Date())[0].pace == nil)
+}
