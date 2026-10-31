@@ -134,3 +134,30 @@ private func weekPace(used: Double, elapsed: Double) throws -> Usage.Pace? {
     #expect(reset.gauges(now: Date(timeIntervalSince1970: 200))[0].pace == nil)
     #expect(try decode(#"{"seven_day":{"used_percentage":40}}"#).gauges(now: Date())[0].pace == nil)
 }
+
+@Test func claudeConfigCacheDecodesUsageAndFetchTime() throws {
+    let json = #"{"numStartups":3,"cachedUsageUtilization":{"fetchedAtMs":1793394894825,"accountUuid":"x","utilization":{"five_hour":{"utilization":18,"resets_at":"2026-10-30T23:00:00.450771+00:00"},"seven_day":{"utilization":32,"resets_at":"2026-11-05T02:00:00.450793+00:00"},"extra_usage":{"is_enabled":true}}}}"#
+    let usage = try #require(Usage.decodeClaudeConfig(Data(json.utf8)))
+    #expect(usage.fetchedAt == Date(timeIntervalSince1970: 1793394894.825))
+    #expect(usage.windows.map(\.length) == [Usage.sessionLength, Usage.weekLength])
+    #expect(usage.windows.map(\.usedPercentage) == [18, 32])
+    #expect(usage.windows.map(\.resetsAt) == [1793401200.450771, 1793844000.450793])
+    #expect(Usage.decodeClaudeConfig(Data(#"{"numStartups":3}"#.utf8)) == nil)
+}
+
+@Test func newestUsagePicksTheLatestFetch() {
+    let old = Usage(windows: [], fetchedAt: Date(timeIntervalSince1970: 100))
+    let new = Usage(windows: [], fetchedAt: Date(timeIntervalSince1970: 200))
+    #expect(Usage.newest([old, nil, new])?.fetchedAt == new.fetchedAt)
+    #expect(Usage.newest([nil, old])?.fetchedAt == old.fetchedAt)
+    #expect(Usage.newest([nil]) == nil)
+}
+
+@Test func ageTextShowsOnlyForOldData() throws {
+    let calendar = utcCalendar()
+    let now = Date(timeIntervalSince1970: 86400 + 10 * 3600)  // Friday 2 Jan 1970 10:00 UTC
+    #expect(Usage(windows: [], fetchedAt: now.addingTimeInterval(-4 * 60)).ageText(now: now, calendar: calendar) == nil)
+    #expect(Usage(windows: [], fetchedAt: now.addingTimeInterval(-2 * 3600)).ageText(now: now, calendar: calendar) == "as of 08:00")
+    #expect(Usage(windows: [], fetchedAt: now.addingTimeInterval(-12 * 3600)).ageText(now: now, calendar: calendar) == "as of Thu 22:00")
+    #expect(Usage(windows: []).ageText(now: now, calendar: calendar) == nil)
+}

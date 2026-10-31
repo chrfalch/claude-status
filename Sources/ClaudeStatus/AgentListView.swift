@@ -117,7 +117,7 @@ final class UsageView: FlippedView {
     private static let rowHeight: CGFloat = 18
     private static let daysHeight: CGFloat = 11
 
-    init(sections: [(title: String, icon: NSImage?, gauges: [Usage.Gauge])]) {
+    init(sections: [(title: String, icon: NSImage?, age: String?, gauges: [Usage.Gauge])]) {
         var y: CGFloat = 4
         var subviews: [NSView] = []
         let barX = AgentListView.inset + Self.nameWidth
@@ -135,6 +135,11 @@ final class UsageView: FlippedView {
             let title = Self.label(section.title.uppercased(), color: .tertiaryLabelColor, alignment: .left, size: 9, weight: .semibold)
             title.frame = NSRect(x: titleX, y: y, width: barWidth, height: Self.daysHeight + 2)
             subviews.append(title)
+            if let age = section.age {
+                let label = Self.label(age, color: .tertiaryLabelColor, alignment: .right, size: 9)
+                label.frame = NSRect(x: AgentListView.width - AgentListView.inset - Self.detailWidth, y: y, width: Self.detailWidth, height: Self.daysHeight + 2)
+                subviews.append(label)
+            }
             y += Self.daysHeight + 7
             for gauge in section.gauges {
                 let name = Self.label(gauge.name, color: .secondaryLabelColor, alignment: .left)
