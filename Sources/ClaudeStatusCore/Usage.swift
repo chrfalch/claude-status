@@ -36,9 +36,35 @@ public struct Usage: Sendable {
     public static let weekLength: TimeInterval = 7 * 86400
 
     public let windows: [Window]
+    /// When the numbers were read from the provider; nil when unknown.
+    public let fetchedAt: Date?
 
-    public init(windows: [Window]) {
+    public init(windows: [Window], fetchedAt: Date? = nil) {
         self.windows = windows.sorted { $0.length < $1.length }
+        self.fetchedAt = fetchedAt
+    }
+
+    public func with(fetchedAt: Date?) -> Usage { Usage(windows: windows, fetchedAt: fetchedAt) }
+
+    public static func newest(_ usages: [Usage?]) -> Usage? {
+        usages.compactMap { $0 }.max { ($0.fetchedAt ?? .distantPast) < ($1.fetchedAt ?? .distantPast) }
+    }
+
+    private static let staleAge: TimeInterval = 5 * 60
+
+    public func ageText(now: Date, calendar: Calendar = .current) -> String? {
+        guard let fetchedAt, now.timeIntervalSince(fetchedAt) >= Self.staleAge else { return nil }
+        let format = calendar.isDate(fetchedAt, inSameDayAs: now) ? "HH:mm" : "EEE HH:mm"
+        return "as of \(Self.format(fetchedAt, format, calendar: calendar))"
+    }
+
+    static func format(_ date: Date, _ format: String, calendar: Calendar) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.timeZone = calendar.timeZone
+        formatter.locale = calendar.locale
+        formatter.dateFormat = format
+        return formatter.string(from: date)
     }
 
     // MARK: Claude
@@ -59,6 +85,45 @@ public struct Usage: Sendable {
         return Usage(windows: [(limits.five_hour, sessionLength), (limits.seven_day, weekLength)].compactMap { window, length in
             window.map { Usage.Window(length: length, usedPercentage: $0.used_percentage, resetsAt: $0.resets_at) }
         })
+    }
+
+    /// Claude Code keeps the last numbers it fetched in its config file, also when the status line never runs.
+    public static let claudeConfig = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude.json")
+
+    public static func decodeClaudeConfig(_ data: Data) -> Usage? {
+        struct Window: Decodable {
+            let utilization: Double?
+            let resets_at: String?
+        }
+        struct Limits: Decodable {
+            let five_hour: Window?
+            let seven_day: Window?
+        }
+        struct Cache: Decodable {
+            let fetchedAtMs: Double?
+            let utilization: Limits?
+        }
+        struct Config: Decodable {
+            let cachedUsageUtilization: Cache?
+        }
+        guard let cache = (try? JSONDecoder().decode(Config.self, from: data))?.cachedUsageUtilization,
+              let limits = cache.utilization else { return nil }
+        return Usage(
+            windows: [(limits.five_hour, sessionLength), (limits.seven_day, weekLength)].compactMap { window, length in
+                window.map { Usage.Window(length: length, usedPercentage: $0.utilization, resetsAt: $0.resets_at.flatMap(unixTime)) }
+            },
+            fetchedAt: cache.fetchedAtMs.map { Date(timeIntervalSince1970: $0 / 1000) }
+        )
+    }
+
+    // ISO8601DateFormatter reads at most milliseconds, and these dates carry microseconds.
+    private static func unixTime(_ iso: String) -> Double? {
+        let parts = iso.split(separator: ".", maxSplits: 1)
+        guard parts.count == 2, let zone = parts[1].firstIndex(where: { $0 == "+" || $0 == "-" || $0 == "Z" }) else {
+            return ISO8601DateFormatter().date(from: iso)?.timeIntervalSince1970
+        }
+        guard let whole = ISO8601DateFormatter().date(from: String(parts[0]) + parts[1][zone...]) else { return nil }
+        return Double("\(Int(whole.timeIntervalSince1970)).\(parts[1][..<zone])")
     }
 
     // MARK: Codex
@@ -164,12 +229,8 @@ public struct Usage: Sendable {
         case ..<15: return Pace(level: .ahead, text: "\(points) pts ahead")
         default:
             let runsOut = Date(timeIntervalSince1970: start + length * elapsed / used)
-            let formatter = DateFormatter()
-            formatter.calendar = calendar
-            formatter.timeZone = calendar.timeZone
-            formatter.locale = calendar.locale
-            formatter.dateFormat = calendar.isDate(runsOut, inSameDayAs: now) ? "HH:mm" : "EEE HH:mm"
-            return Pace(level: .over, text: "out \(formatter.string(from: runsOut))")
+            let format = calendar.isDate(runsOut, inSameDayAs: now) ? "HH:mm" : "EEE HH:mm"
+            return Pace(level: .over, text: "out \(Self.format(runsOut, format, calendar: calendar))")
         }
     }
 

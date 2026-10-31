@@ -119,10 +119,18 @@ final class StatusController: NSObject, NSMenuDelegate {
     }
 
     nonisolated private static func readUsages() -> [(String, Usage)] {
-        [
-            ("Claude", (try? Data(contentsOf: Usage.file)).flatMap(Usage.decode)),
-            ("Codex", Usage.newestCodexSessionLog().flatMap { try? tail(of: $0) }.flatMap { Usage.codex(sessionLog: $0) }),
-        ].compactMap { name, usage in usage.map { (name, $0) } }
+        // The status line file is written only when the CLI runs, and the config cache only when Claude Code fetches.
+        let claude = Usage.newest([
+            (try? Data(contentsOf: Usage.file)).flatMap(Usage.decode)?.with(fetchedAt: modificationDate(Usage.file)),
+            (try? Data(contentsOf: Usage.claudeConfig)).flatMap(Usage.decodeClaudeConfig),
+        ])
+        let codexLog = Usage.newestCodexSessionLog()
+        let codex = codexLog.flatMap { try? tail(of: $0) }.flatMap { Usage.codex(sessionLog: $0) }?.with(fetchedAt: codexLog.flatMap(modificationDate))
+        return [("Claude", claude), ("Codex", codex)].compactMap { name, usage in usage.map { (name, $0) } }
+    }
+
+    nonisolated private static func modificationDate(_ url: URL) -> Date? {
+        (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
     }
 
     /// Codex session logs grow for the whole session, and its latest limits are near the end.
@@ -137,7 +145,7 @@ final class StatusController: NSObject, NSMenuDelegate {
     private func render() {
         menu.removeAllItems()
         let sections = usages
-            .map { name, usage in (title: name, icon: usageIcons[name], gauges: usage.gauges(now: Date())) }
+            .map { name, usage in (title: name, icon: usageIcons[name], age: usage.ageText(now: Date()), gauges: usage.gauges(now: Date())) }
             .filter { !$0.gauges.isEmpty }
         if !sections.isEmpty {
             let line = NSMenuItem()
