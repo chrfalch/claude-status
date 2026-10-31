@@ -152,8 +152,13 @@ final class UsageView: FlippedView {
                         letter.frame = NSRect(x: barX + CGFloat(index) * segment, y: y - 3, width: segment, height: Self.daysHeight)
                         subviews.append(letter)
                     }
-                    y += Self.daysHeight - 2
                 }
+                if let pace = gauge.pace {
+                    let label = Self.label(pace.text, color: Self.color(pace.level), alignment: .right, size: 9)
+                    label.frame = NSRect(x: AgentListView.width - AgentListView.inset - Self.detailWidth, y: y - 3, width: Self.detailWidth, height: Self.daysHeight)
+                    subviews.append(label)
+                }
+                if gauge.days != nil || gauge.pace != nil { y += Self.daysHeight - 2 }
             }
         }
         super.init(frame: NSRect(x: 0, y: 0, width: AgentListView.width, height: y + 6))
@@ -161,6 +166,14 @@ final class UsageView: FlippedView {
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    private static func color(_ level: Usage.Pace.Level) -> NSColor {
+        switch level {
+        case .calm: .tertiaryLabelColor
+        case .ahead: .systemOrange
+        case .over: .systemRed
+        }
+    }
 
     private static func label(_ text: String, color: NSColor, alignment: NSTextAlignment, size: CGFloat = NSFont.smallSystemFontSize, weight: NSFont.Weight = .medium) -> NSTextField {
         let label = NSTextField(labelWithString: text)
