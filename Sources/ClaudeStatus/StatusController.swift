@@ -12,6 +12,7 @@ final class StatusController: NSObject, NSMenuDelegate {
     private var refreshing = false
     private var agents: [Agent] = []
     private let summarizer = Summarizer()
+    private let web = WebServer()
     private var summaries: [String: String] = [:]
     private var errorText: String? = "Loading…"
     private var lastUpdated: Date?
@@ -217,6 +218,16 @@ final class StatusController: NSObject, NSMenuDelegate {
         quit.keyEquivalentModifierMask = .command
         quit.target = NSApp
         menu.addItem(quit)
+        web.update(WebSnapshot(
+            agents: agents,
+            summaries: summaries,
+            hosts: agents.reduce(into: [:]) { hosts, agent in
+                hosts[WebPage.key(of: agent)] = agent.pid.flatMap { hostApp(of: Int32($0)) }?.localizedName
+            },
+            usages: usages,
+            updated: lastUpdated
+        ), binary: binary)
+        web.startIfNeeded()
     }
 
     @discardableResult
