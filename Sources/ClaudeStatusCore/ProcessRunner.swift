@@ -31,7 +31,7 @@ private final class CommandOutput: @unchecked Sendable {
 }
 
 public enum ProcessRunner {
-    public static func run(_ executable: URL, arguments: [String], timeout: TimeInterval) throws -> Data {
+    public static func run(_ executable: URL, arguments: [String], timeout: TimeInterval, directory: URL? = nil) throws -> Data {
         let process = Process()
         let pipe = Pipe()
         let reader = pipe.fileHandleForReading
@@ -39,6 +39,8 @@ public enum ProcessRunner {
         let terminated = DispatchSemaphore(value: 0)
         process.executableURL = executable
         process.arguments = arguments
+        process.currentDirectoryURL = directory
+        process.standardInput = FileHandle.nullDevice
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
         let flags = fcntl(reader.fileDescriptor, F_GETFL)

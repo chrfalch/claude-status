@@ -88,6 +88,9 @@ public struct Usage: Sendable {
     }
 
     /// Claude Code keeps the last numbers it fetched in its config file, also when the status line never runs.
+    /// Claude Code does not fetch again while its cache is younger than this.
+    public static let claudeCacheLifetime: TimeInterval = 60
+
     public static let claudeConfig = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude.json")
 
     public static func decodeClaudeConfig(_ data: Data) -> Usage? {
