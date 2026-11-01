@@ -195,3 +195,9 @@ import Testing
     #expect(agents.map(\.menuLabel) == ["cmd — working", "sub — working", "plain — idle", "busy — working", "wait — waiting"])
     #expect(Agent.sorted(agents).map(\.displayName) == ["wait", "busy", "cmd", "sub", "plain"])
 }
+
+@Test func processRunnerRunsInTheGivenDirectory() throws {
+    let directory = URL(fileURLWithPath: "/usr/share")
+    let output = try ProcessRunner.run(URL(fileURLWithPath: "/bin/pwd"), arguments: [], timeout: 5, directory: directory)
+    #expect(String(decoding: output, as: UTF8.self).trimmingCharacters(in: .newlines) == directory.path)
+}

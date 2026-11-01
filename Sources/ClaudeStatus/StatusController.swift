@@ -17,6 +17,7 @@ final class StatusController: NSObject, NSMenuDelegate {
     private var lastUpdated: Date?
     private var iconColor: NSColor?
     private var usages: [(String, Usage)] = []
+    private var fetchingClaudeUsage = false
     private let usageIcons: [String: NSImage] = [("Claude", "com.anthropic.claudefordesktop"), ("Codex", "com.openai.codex")]
         .reduce(into: [:]) { icons, app in
             if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: app.1) {
@@ -49,6 +50,28 @@ final class StatusController: NSObject, NSMenuDelegate {
         usages = Self.readUsages()
         render()
         refresh(force: true)
+        fetchClaudeUsage()
+    }
+
+    // Claude Code writes its usage cache only on some events, such as /usage, and not when only the VS Code panel is used.
+    // In print mode /usage makes no model call, so it costs no tokens.
+    private func fetchClaudeUsage() {
+        let claude = usages.first { $0.0 == "Claude" }?.1
+        guard !fetchingClaudeUsage, let binary,
+              Date().timeIntervalSince(claude?.fetchedAt ?? .distantPast) > Usage.claudeCacheLifetime else { return }
+        fetchingClaudeUsage = true
+        render()
+        DispatchQueue.global(qos: .utility).async {
+            _ = try? ProcessRunner.run(URL(fileURLWithPath: binary), arguments: ["-p", "/usage", "--no-session-persistence"], timeout: 30,
+                                       directory: FileManager.default.homeDirectoryForCurrentUser)
+            let usages = Self.readUsages()
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.fetchingClaudeUsage = false
+                self.usages = usages
+                self.render()
+            }
+        }
     }
 
     @objc private func refreshNow() { refresh(force: true) }
@@ -145,7 +168,10 @@ final class StatusController: NSObject, NSMenuDelegate {
     private func render() {
         menu.removeAllItems()
         let sections = usages
-            .map { name, usage in (title: name, icon: usageIcons[name], age: usage.ageText(now: Date()), gauges: usage.gauges(now: Date())) }
+            .map { name, usage in
+                let age = name == "Claude" && fetchingClaudeUsage ? "updating…" : usage.ageText(now: Date())
+                return (title: name, icon: usageIcons[name], age: age, gauges: usage.gauges(now: Date()))
+            }
             .filter { !$0.gauges.isEmpty }
         if !sections.isEmpty {
             let line = NSMenuItem()
