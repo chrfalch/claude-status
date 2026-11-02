@@ -38,11 +38,30 @@ private func decode(_ json: String) throws -> Usage {
     var calendar = Calendar(identifier: .gregorian)
     calendar.timeZone = TimeZone(identifier: "Europe/Oslo")!
     calendar.locale = Locale(identifier: "en_US_POSIX")
-    // Window ends Thursday 2026-11-05 09:00 Oslo time, so it starts Thursday 2026-10-29 09:00.
+    // The reset day counts as a whole day, so a Thursday 09:00 reset gives Friday to Thursday.
     let end = try #require(calendar.date(from: DateComponents(year: 2026, month: 11, day: 5, hour: 9)))
     let days = Usage.weekDays(endingAt: end, calendar: calendar)
-    #expect(days.map(\.symbol) == ["T", "F", "S", "S", "M", "T", "W"])
-    #expect(days.map(\.isWeekend) == [false, false, true, true, false, false, false])
+    #expect(days.map(\.symbol) == ["F", "S", "S", "M", "T", "W", "T"])
+    #expect(days.map(\.isWeekend) == [false, true, true, false, false, false, false])
+    // A reset at midnight ends the day before.
+    let midnight = try #require(calendar.date(from: DateComponents(year: 2026, month: 11, day: 5)))
+    #expect(Usage.weekDays(endingAt: midnight, calendar: calendar).map(\.symbol) == ["T", "F", "S", "S", "M", "T", "W"])
+}
+
+@Test func weekElapsedCountsCalendarDays() throws {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(identifier: "Europe/Oslo")!
+    calendar.locale = Locale(identifier: "en_US_POSIX")
+    let reset = try #require(calendar.date(from: DateComponents(year: 2026, month: 11, day: 5, hour: 3)))
+    let usage = try decode(#"{"seven_day":{"used_percentage":40,"resets_at":\#(reset.timeIntervalSince1970)}}"#)
+    func elapsed(_ day: Int, _ hour: Int) throws -> Double {
+        let now = try #require(calendar.date(from: DateComponents(year: 2026, month: day < 10 ? 11 : 10, day: day, hour: hour)))
+        return try #require(usage.gauges(now: now, calendar: calendar)[0].elapsed)
+    }
+    // Friday 30 Oct 00:00 to Friday 6 Nov 00:00; the clocks moved on 25 Oct, so every day has 24 hours.
+    #expect(abs(try elapsed(2, 12) - 3.5 / 7) < 0.0001)
+    #expect(abs(try elapsed(5, 2) - (6 + 2.0 / 24) / 7) < 0.0001)
+    #expect(try elapsed(29, 20) == 0)
 }
 
 private func codexRecord(_ rateLimits: String) -> String {
