@@ -26,5 +26,5 @@ import Testing
     #expect(agent.displayName == "agent-name")
     agent.ledgerTitle = "ledger-slug"
     #expect(agent.displayName == "ledger-slug")
-    #expect(agent.menuLabel == "ledger-slug — idle")
+    #expect(agent.menuLabel == "ledger-slug")
 }

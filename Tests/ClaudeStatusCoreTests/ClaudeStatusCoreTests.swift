@@ -164,7 +164,7 @@ import Testing
 
 @Test func menuLabels() throws {
     let agents = try Agent.decode(Data(#"[{"name":"A","status":"blocked"},{"name":"B","status":"busy"},{"name":"C","status":"idle"},{"name":"D","status":"foo"}]"#.utf8))
-    #expect(agents.map(\.menuLabel) == ["A — waiting", "B — working", "C — idle", "D — working (unknown: foo)"])
+    #expect(agents.map(\.menuLabel) == ["A", "B", "C", "D (unknown: foo)"])
 }
 
 @Test func skipsNonObjectEntries() throws {
@@ -192,7 +192,7 @@ import Testing
     agents[3].shellCommands = 1
     agents[4].shellCommands = 1
     #expect(agents.map(\.activity) == [.working, .working, .idle, .working, .waiting])
-    #expect(agents.map(\.menuLabel) == ["cmd — working", "sub — working", "plain — idle", "busy — working", "wait — waiting"])
+    #expect(agents.map(\.menuLabel) == ["cmd", "sub", "plain", "busy", "wait"])
     #expect(Agent.sorted(agents).map(\.displayName) == ["wait", "busy", "cmd", "sub", "plain"])
 }
 
