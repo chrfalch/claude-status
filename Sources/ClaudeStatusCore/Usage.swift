@@ -183,14 +183,23 @@ public struct Usage: Sendable {
         windows.compactMap { Self.gauge($0, now: now, calendar: calendar) }
     }
 
-    /// One day per 24 hours of the week window, named by the weekday at the middle of that day.
+    /// The seven calendar days that end with the reset day.
     public static func weekDays(endingAt end: Date, calendar: Calendar = .current) -> [Day] {
-        let start = end.addingTimeInterval(-weekLength)
-        return (0..<7).map { index in
-            let middle = start.addingTimeInterval((Double(index) + 0.5) * 86400)
-            let weekday = calendar.component(.weekday, from: middle)
-            return Day(symbol: calendar.veryShortWeekdaySymbols[weekday - 1], isWeekend: calendar.isDateInWeekend(middle))
+        let span = calendarWeek(endingAt: end, calendar: calendar)
+        return (0..<7).compactMap { index in
+            calendar.date(byAdding: .day, value: index, to: span.start).map { day in
+                Day(symbol: calendar.veryShortWeekdaySymbols[calendar.component(.weekday, from: day) - 1], isWeekend: calendar.isDateInWeekend(day))
+            }
         }
+    }
+
+    // The reset day counts as a whole day: with a Thursday 03:00 reset, all of Thursday is still left.
+    // A reset at exactly midnight belongs to the day before.
+    private static func calendarWeek(endingAt end: Date, calendar: Calendar) -> DateInterval {
+        let lastDay = calendar.startOfDay(for: end.addingTimeInterval(-1))
+        let start = calendar.date(byAdding: .day, value: -6, to: lastDay) ?? lastDay
+        let stop = calendar.date(byAdding: .day, value: 1, to: lastDay) ?? end
+        return DateInterval(start: start, end: stop)
     }
 
     private static func name(_ length: TimeInterval) -> String {
@@ -209,15 +218,20 @@ public struct Usage: Sendable {
         if let remaining, remaining <= 0 { return Gauge(name: name, used: nil, elapsed: nil, detail: "reset", days: nil, pace: nil) }
         guard let percentage = window.usedPercentage else { return nil }
         let used = "\(Int(percentage.rounded()))%"
-        let elapsed = remaining.map { min(1, max(0, 1 - $0 / window.length)) }
+        let span = window.resetsAt.map { reset in
+            window.length == weekLength
+                ? calendarWeek(endingAt: Date(timeIntervalSince1970: reset), calendar: calendar)
+                : DateInterval(start: Date(timeIntervalSince1970: reset - window.length), duration: window.length)
+        }
+        let elapsed = span.map { min(1, max(0, now.timeIntervalSince($0.start) / $0.duration)) }
         return Gauge(
             name: name,
             used: min(1, max(0, percentage / 100)),
             elapsed: elapsed,
             detail: remaining.map { "\(used) · resets in \(duration($0))" } ?? used,
             days: days,
-            pace: elapsed.flatMap { elapsed in
-                window.resetsAt.flatMap { pace(used: percentage / 100, elapsed: elapsed, start: $0 - window.length, length: window.length, now: now, calendar: calendar) }
+            pace: span.flatMap { span in
+                elapsed.flatMap { pace(used: percentage / 100, elapsed: $0, start: span.start.timeIntervalSince1970, length: span.duration, now: now, calendar: calendar) }
             }
         )
     }
