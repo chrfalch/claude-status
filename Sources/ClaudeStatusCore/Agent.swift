@@ -53,7 +53,7 @@ public struct Agent: Decodable, Sendable {
 
     public var menuLabel: String {
         let suffix = resolvedStatus.unknownRawValue.map { " (unknown: \($0))" } ?? ""
-        return "\(displayName) — \(activity.label)\(suffix)"
+        return displayName + suffix
     }
 
     public var displayName: String {
