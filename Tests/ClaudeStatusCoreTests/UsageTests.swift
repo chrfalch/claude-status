@@ -38,11 +38,13 @@ private func decode(_ json: String) throws -> Usage {
     var calendar = Calendar(identifier: .gregorian)
     calendar.timeZone = TimeZone(identifier: "Europe/Oslo")!
     calendar.locale = Locale(identifier: "en_US_POSIX")
-    // The reset day counts as a whole day, so a Thursday 09:00 reset gives Friday to Thursday.
-    let end = try #require(calendar.date(from: DateComponents(year: 2026, month: 11, day: 5, hour: 9)))
-    let days = Usage.weekDays(endingAt: end, calendar: calendar)
-    #expect(days.map(\.symbol) == ["F", "S", "S", "M", "T", "W", "T"])
-    #expect(days.map(\.isWeekend) == [false, true, true, false, false, false, false])
+    // Each edge moves to the nearest midnight: a Thursday 09:00 reset gives Thursday to Wednesday.
+    let morning = try #require(calendar.date(from: DateComponents(year: 2026, month: 11, day: 5, hour: 9)))
+    let days = Usage.weekDays(endingAt: morning, calendar: calendar)
+    #expect(days.map(\.symbol) == ["T", "F", "S", "S", "M", "T", "W"])
+    #expect(days.map(\.isWeekend) == [false, false, true, true, false, false, false])
+    let evening = try #require(calendar.date(from: DateComponents(year: 2026, month: 11, day: 5, hour: 22)))
+    #expect(Usage.weekDays(endingAt: evening, calendar: calendar).map(\.symbol) == ["F", "S", "S", "M", "T", "W", "T"])
     // A reset at midnight ends the day before.
     let midnight = try #require(calendar.date(from: DateComponents(year: 2026, month: 11, day: 5)))
     #expect(Usage.weekDays(endingAt: midnight, calendar: calendar).map(\.symbol) == ["T", "F", "S", "S", "M", "T", "W"])
@@ -58,10 +60,10 @@ private func decode(_ json: String) throws -> Usage {
         let now = try #require(calendar.date(from: DateComponents(year: 2026, month: day < 10 ? 11 : 10, day: day, hour: hour)))
         return try #require(usage.gauges(now: now, calendar: calendar)[0].elapsed)
     }
-    // Friday 30 Oct 00:00 to Friday 6 Nov 00:00; the clocks moved on 25 Oct, so every day has 24 hours.
-    #expect(abs(try elapsed(2, 12) - 3.5 / 7) < 0.0001)
-    #expect(abs(try elapsed(5, 2) - (6 + 2.0 / 24) / 7) < 0.0001)
-    #expect(try elapsed(29, 20) == 0)
+    // Thursday 29 Oct 00:00 to Thursday 5 Nov 00:00; the clocks moved on 25 Oct, so every day has 24 hours.
+    #expect(abs(try elapsed(29, 20) - (20.0 / 24) / 7) < 0.0001)
+    #expect(abs(try elapsed(2, 12) - 4.5 / 7) < 0.0001)
+    #expect(try elapsed(5, 2) == 1)
 }
 
 private func codexRecord(_ rateLimits: String) -> String {
