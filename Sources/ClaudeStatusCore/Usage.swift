@@ -183,7 +183,7 @@ public struct Usage: Sendable {
         windows.compactMap { Self.gauge($0, now: now, calendar: calendar) }
     }
 
-    /// The seven calendar days that end with the reset day.
+    /// The seven calendar days of the week, with each edge at the midnight nearest the window edge.
     public static func weekDays(endingAt end: Date, calendar: Calendar = .current) -> [Day] {
         let span = calendarWeek(endingAt: end, calendar: calendar)
         return (0..<7).compactMap { index in
@@ -193,12 +193,13 @@ public struct Usage: Sendable {
         }
     }
 
-    // The reset day counts as a whole day: with a Thursday 03:00 reset, all of Thursday is still left.
-    // A reset at exactly midnight belongs to the day before.
+    // Each edge moves to the nearest midnight: a Thursday 03:00 reset makes Thursday the first day of the new week,
+    // and a Thursday 22:00 reset makes it the last day of the old one.
     private static func calendarWeek(endingAt end: Date, calendar: Calendar) -> DateInterval {
-        let lastDay = calendar.startOfDay(for: end.addingTimeInterval(-1))
-        let start = calendar.date(byAdding: .day, value: -6, to: lastDay) ?? lastDay
-        let stop = calendar.date(byAdding: .day, value: 1, to: lastDay) ?? end
+        let dayStart = calendar.startOfDay(for: end)
+        let nextDay = calendar.date(byAdding: .day, value: 1, to: dayStart) ?? end
+        let stop = end.timeIntervalSince(dayStart) < nextDay.timeIntervalSince(end) ? dayStart : nextDay
+        let start = calendar.date(byAdding: .day, value: -7, to: stop) ?? stop
         return DateInterval(start: start, end: stop)
     }
 
