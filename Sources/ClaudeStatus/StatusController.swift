@@ -17,6 +17,9 @@ final class StatusController: NSObject, NSMenuDelegate {
     private var errorText: String? = "Loading…"
     private var lastUpdated: Date?
     private var iconColor: NSColor?
+    private var dot: NSImage?
+    private var warningColor: NSColor?
+    private var blink: Timer?
     private var usages: [(String, Usage)] = []
     private var fetchingClaudeUsage = false
     private let usageIcons: [String: NSImage] = [("Claude", "com.anthropic.claudefordesktop"), ("Codex", "com.openai.codex")]
@@ -180,6 +183,7 @@ final class StatusController: NSObject, NSMenuDelegate {
             menu.addItem(line)
             menu.addItem(.separator())
         }
+        showWarning(Usage.warning(usages.map(\.1), now: Date()).map { $0 == .over ? .systemRed : .systemOrange })
         if let errorText {
             showIcon(.systemOrange)
             item.button?.toolTip = errorText
@@ -286,7 +290,8 @@ final class StatusController: NSObject, NSMenuDelegate {
         pulse?.invalidate()
         pulse = nil
         guard let previous, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
-            item.button?.image = StatusDot.pill(StatusDot.image(color, canvas: iconCanvas))
+            dot = StatusDot.image(color, canvas: iconCanvas)
+            drawIcon()
             return
         }
         let start = Date()
@@ -297,12 +302,36 @@ final class StatusController: NSObject, NSMenuDelegate {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 let progress = min(1, Date().timeIntervalSince(start) / duration)
-                self.item.button?.image = StatusDot.pill(StatusDot.pulse(from: previous, to: color, progress: progress, canvas: canvas))
+                self.dot = StatusDot.pulse(from: previous, to: color, progress: progress, canvas: canvas)
+                self.drawIcon()
                 if progress >= 1 {
                     self.pulse?.invalidate()
                     self.pulse = nil
                 }
             }
         }
+    }
+
+    private func showWarning(_ color: NSColor?) {
+        guard color != warningColor else { return }
+        warningColor = color
+        blink?.invalidate()
+        blink = nil
+        drawIcon()
+        guard color != nil, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+        blink = Timer.scheduledTimer(withTimeInterval: 1.0 / 20, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.drawIcon() }
+        }
+    }
+
+    private func drawIcon() {
+        guard let dot else { return }
+        let tint = warningColor.map { color -> NSColor in
+            if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { return color.withAlphaComponent(0.7) }
+            let period: TimeInterval = 1.6
+            let phase = Date().timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: period) / period
+            return color.withAlphaComponent(0.85 * (0.5 - 0.5 * cos(2 * .pi * phase)))
+        }
+        item.button?.image = StatusDot.pill(dot, tint: tint)
     }
 }

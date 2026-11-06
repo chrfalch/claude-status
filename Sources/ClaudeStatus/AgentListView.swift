@@ -335,19 +335,34 @@ enum StatusDot {
     }
 
     /// The menu bar icon: a light pill holding the agent emoji and the dot image, which may be a pulse frame.
-    static func pill(_ dot: NSImage, emoji: String = "🤖") -> NSImage {
+    /// A tint colors the emoji, with its strength set by the color's alpha.
+    static func pill(_ dot: NSImage, emoji: String = "🤖", tint: NSColor? = nil) -> NSImage {
         let text = NSAttributedString(string: emoji, attributes: [.font: NSFont.systemFont(ofSize: 12)])
         let textSize = text.size()
+        // Drawn on its own image so the tint covers only the emoji's pixels, not the pill.
+        let glyph = NSImage(size: textSize, flipped: false) { rect in
+            text.draw(at: .zero)
+            if let tint {
+                tint.set()
+                rect.fill(using: .sourceAtop)
+            }
+            return true
+        }
         let height = dot.size.height
         let pillHeight: CGFloat = 18
         let padding: CGFloat = 6
         let dotDiameter: CGFloat = 10
         let width = padding + ceil(textSize.width) + 4 + dotDiameter + padding
         let image = NSImage(size: NSSize(width: width, height: height), flipped: false) { _ in
+            let shape = NSBezierPath(roundedRect: NSRect(x: 0, y: (height - pillHeight) / 2, width: width, height: pillHeight),
+                                     xRadius: pillHeight / 2, yRadius: pillHeight / 2)
             NSColor.labelColor.withAlphaComponent(0.15).setFill()
-            NSBezierPath(roundedRect: NSRect(x: 0, y: (height - pillHeight) / 2, width: width, height: pillHeight),
-                         xRadius: pillHeight / 2, yRadius: pillHeight / 2).fill()
-            text.draw(at: NSPoint(x: padding, y: (height - textSize.height) / 2))
+            shape.fill()
+            if let tint {
+                tint.withAlphaComponent(tint.alphaComponent * 0.5).setFill()
+                shape.fill()
+            }
+            glyph.draw(at: NSPoint(x: padding, y: (height - textSize.height) / 2), from: .zero, operation: .sourceOver, fraction: 1)
             let dotCenterX = width - padding - dotDiameter / 2
             dot.draw(in: NSRect(x: dotCenterX - dot.size.width / 2, y: 0, width: dot.size.width, height: height))
             return true

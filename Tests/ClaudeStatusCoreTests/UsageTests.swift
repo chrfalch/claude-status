@@ -182,3 +182,14 @@ private func weekPace(used: Double, elapsed: Double) throws -> Usage.Pace? {
     #expect(Usage(windows: [], fetchedAt: now.addingTimeInterval(-12 * 3600)).ageText(now: now, calendar: calendar) == "as of Thu 22:00")
     #expect(Usage(windows: []).ageText(now: now, calendar: calendar) == nil)
 }
+
+@Test func warningIsTheStrongestPaceOfAllUsages() throws {
+    let now = Date(timeIntervalSince1970: 604800 * 0.3)
+    let calm = try decode(#"{"seven_day":{"used_percentage":30,"resets_at":604800}}"#)
+    let ahead = try decode(#"{"seven_day":{"used_percentage":40,"resets_at":604800}}"#)
+    let over = try decode(#"{"five_hour":{"used_percentage":1,"resets_at":604800},"seven_day":{"used_percentage":60,"resets_at":604800}}"#)
+    #expect(Usage.warning([calm], now: now) == nil)
+    #expect(Usage.warning([calm, ahead], now: now) == .ahead)
+    #expect(Usage.warning([ahead, over, calm], now: now) == .over)
+    #expect(Usage.warning([], now: now) == nil)
+}
