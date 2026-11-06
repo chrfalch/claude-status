@@ -22,7 +22,7 @@ public struct Usage: Sendable {
 
     /// How the use compares with an even spread over the window.
     public struct Pace: Equatable, Sendable {
-        public enum Level: Sendable { case calm, ahead, over }
+        public enum Level: Comparable, Sendable { case calm, ahead, over }
         public let level: Level
         public let text: String
     }
@@ -181,6 +181,11 @@ public struct Usage: Sendable {
 
     public func gauges(now: Date, calendar: Calendar = .current) -> [Gauge] {
         windows.compactMap { Self.gauge($0, now: now, calendar: calendar) }
+    }
+
+    /// The strongest pace warning of all gauges, or nil when every gauge is calm.
+    public static func warning(_ usages: [Usage], now: Date, calendar: Calendar = .current) -> Pace.Level? {
+        usages.flatMap { $0.gauges(now: now, calendar: calendar) }.compactMap(\.pace?.level).filter { $0 != .calm }.max()
     }
 
     /// The seven calendar days of the week, with each edge at the midnight nearest the window edge.
