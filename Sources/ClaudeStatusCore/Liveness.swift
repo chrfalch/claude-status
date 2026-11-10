@@ -20,6 +20,20 @@ public struct Roster: Decodable, Sendable {
 
     private enum CodingKeys: String, CodingKey { case workers }
 
+    private init(workers: [String: Worker], undecodableWorkerIds: Set<String>) {
+        self.workers = workers
+        self.undecodableWorkerIds = undecodableWorkerIds
+    }
+
+    /// The daemon writes the roster while it runs. No file means no daemon, so no background agent can be live.
+    /// A file that cannot be decoded returns nil: liveness is then unknown.
+    public static func load(from url: URL) -> Roster? {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return Roster(workers: [:], undecodableWorkerIds: [])
+        }
+        return (try? Data(contentsOf: url)).flatMap { try? JSONDecoder().decode(Roster.self, from: $0) }
+    }
+
     public init(from decoder: Decoder) throws {
         let fields = try decoder.container(keyedBy: CodingKeys.self)
         let entries = try fields.decode([String: Entry].self, forKey: .workers)
