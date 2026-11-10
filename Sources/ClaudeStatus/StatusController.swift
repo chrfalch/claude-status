@@ -95,8 +95,7 @@ final class StatusController: NSObject, NSMenuDelegate {
                 do {
                     let agents = try Agent.decode(ProcessRunner.run(URL(fileURLWithPath: try resolved.get()), arguments: ["agents", "--json"], timeout: 15))
                     let rosterURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/daemon/roster.json")
-                    let roster = (try? Data(contentsOf: rosterURL)).flatMap { try? JSONDecoder().decode(Roster.self, from: $0) }
-                    let live = Agent.live(agents, roster: roster, isAlive: ProcessLiveness.isAlive)
+                    let live = Agent.live(agents, roster: Roster.load(from: rosterURL), isAlive: ProcessLiveness.isAlive)
                     let activity = Transcript.activity(sessionIds: Set(live.compactMap(\.sessionId)))
                     let children = ProcessTree.children(of: Set(live.compactMap { $0.pid.map(Int32.init) }))
                     return live.map { agent in

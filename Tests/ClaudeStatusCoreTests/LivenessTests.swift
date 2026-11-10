@@ -65,6 +65,31 @@ private let backgroundJSON = #"[{"kind":"background","id":"cd53050e","state":"bl
     #expect(result.count == 1)
 }
 
+@Test func missingRosterFileDropsBackground() throws {
+    let url = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString + ".json")
+    let loaded = try #require(Roster.load(from: url))
+    let input = try agents(backgroundJSON)
+    let result = Agent.live(input, roster: loaded, isAlive: { _, _ in
+        Issue.record("A worker absent from an empty roster must not be checked")
+        return true
+    })
+    #expect(result.isEmpty)
+}
+
+@Test func unreadableRosterFileLoadsAsUnknown() throws {
+    let url = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString + ".json")
+    try Data("not json".utf8).write(to: url)
+    defer { try? FileManager.default.removeItem(at: url) }
+    #expect(Roster.load(from: url) == nil)
+}
+
+@Test func rosterFileLoadsWorkers() throws {
+    let url = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString + ".json")
+    try Data(workerJSON.utf8).write(to: url)
+    defer { try? FileManager.default.removeItem(at: url) }
+    #expect(Roster.load(from: url)?.workers["cd53050e"]?.pid == 44961)
+}
+
 @Test func parsesProcStart() {
     let starts = ProcessStart.candidates("Wed Sep 23 17:41:55 2026", localTimeZone: TimeZone(secondsFromGMT: 7200)!)
     #expect(starts.count == 2)
